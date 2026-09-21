@@ -1,0 +1,6 @@
+{
+  "name": "Romantic Birthday Sanctuary",
+  "description": "An immersive, beautifully animated interactive birthday website with vinyl mixtape player, love letter, polaroid memories, and celebration pages.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
