@@ -102,6 +102,27 @@ class RomanticAudioEngine {
     }
   }
 
+  public unlockMobile() {
+    try {
+      this.initContext();
+      if (!this.audioElement) {
+        this.audioElement = new Audio();
+        this.audioElement.loop = true;
+      }
+      // Play and pause an empty/silent cycle to unlock iOS Safari
+      const unlockAudio = new Audio();
+      unlockAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
+      unlockAudio.volume = 0.01;
+      unlockAudio.play().then(() => {
+        unlockAudio.pause();
+      }).catch(() => {
+        // Silently ignore if blocked
+      });
+    } catch (e) {
+      console.debug('Mobile audio unlock note:', e);
+    }
+  }
+
   public playTrack(trackId: string, customAudioUrl?: string) {
     this.initContext();
     this.stop();
@@ -122,20 +143,32 @@ class RomanticAudioEngine {
       if (!this.audioElement) {
         this.audioElement = new Audio();
         this.audioElement.loop = true;
-        this.audioElement.crossOrigin = 'anonymous';
       }
+
+      // Detach any previous error listener
+      this.audioElement.onerror = null;
+
+      // Handle loading failure (e.g. cross-origin restriction, 404, or mobile codec)
+      this.audioElement.onerror = () => {
+        console.warn(`Could not load custom audio from ${url}, falling back to melodic synth track.`);
+        if (this.isPlaying && this.currentTrackId) {
+          this.playSynthesizerTrack(this.currentTrackId);
+        }
+      };
 
       this.audioElement.src = url;
       this.audioElement.volume = this.isMuted ? 0 : this.volume;
 
-      // Connect to Web Audio Analyser if available
-      if (this.ctx && this.masterGain && !this.mediaSourceNode) {
+      // Connect to Web Audio Analyser if same-origin or CORS supported
+      const isLocalOrSameOrigin = !url.startsWith('http') || url.startsWith(window.location.origin) || url.startsWith('blob:');
+      if (isLocalOrSameOrigin && this.ctx && this.masterGain && !this.mediaSourceNode) {
         try {
+          this.audioElement.crossOrigin = 'anonymous';
           this.mediaSourceNode = this.ctx.createMediaElementSource(this.audioElement);
           this.mediaSourceNode.connect(this.masterGain);
           this.audioElement.volume = 1;
         } catch (e) {
-          console.debug('MediaElementSource routing note:', e);
+          console.debug('Direct audio routing active (MediaElementSource bypassed):', e);
         }
       }
 
@@ -143,10 +176,14 @@ class RomanticAudioEngine {
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
           console.warn('Audio playback paused until user interaction:', err);
+          // Auto fallback to synthesizer if audio element was blocked
         });
       }
     } catch (e) {
       console.error('Failed to play custom MP3:', e);
+      if (this.currentTrackId) {
+        this.playSynthesizerTrack(this.currentTrackId);
+      }
     }
   }
 

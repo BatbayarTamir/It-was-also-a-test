@@ -44,6 +44,8 @@ import {
   Globe,
   Copy,
   Terminal,
+  Smartphone,
+  Download,
 } from 'lucide-react';
 import {
   GirlfriendSiteConfig,
@@ -80,6 +82,7 @@ interface PersonalizeModalProps {
   onUploadSongAudio: (songId: string, file: File) => Promise<void>;
   onResetSongAudio: (songId: string) => Promise<void>;
   onUpdateSongMeta: (songId: string, title: string, artist: string, dedication?: string, lyricsSnippet?: string) => void;
+  onUpdateSongAudioUrl?: (songId: string, audioUrl: string) => void;
   onAddNewSongSlot?: () => void;
   onDeleteSong?: (songId: string) => void;
   onResetPlaylist?: () => void;
@@ -144,6 +147,7 @@ export const PersonalizeModal: React.FC<PersonalizeModalProps> = ({
   onUploadSongAudio,
   onResetSongAudio,
   onUpdateSongMeta,
+  onUpdateSongAudioUrl,
   onAddNewSongSlot,
   onDeleteSong,
   onResetPlaylist,
@@ -197,6 +201,8 @@ export const PersonalizeModal: React.FC<PersonalizeModalProps> = ({
   const [tempSongArtist, setTempSongArtist] = useState('');
   const [tempSongDedication, setTempSongDedication] = useState('');
   const [tempSongLyrics, setTempSongLyrics] = useState('');
+  const [tempSongAudioUrl, setTempSongAudioUrl] = useState('');
+  const [copiedPlaylistJson, setCopiedPlaylistJson] = useState(false);
 
   // Polaroid State
   const [uploadingMemoryId, setUploadingMemoryId] = useState<string | null>(null);
@@ -305,6 +311,9 @@ export const PersonalizeModal: React.FC<PersonalizeModalProps> = ({
         uploadFileToGitHub(file, file.name, 'audio', `Upload song audio ${file.name} to resources/audio`).then((res) => {
           if (res.success && res.path) {
             setLastUploadedPath(res.path);
+            if (res.rawUrl && onUpdateSongAudioUrl) {
+              onUpdateSongAudioUrl(songId, res.rawUrl);
+            }
           }
         }).catch((err) => console.warn('Background GitHub audio upload error:', err));
       }
@@ -321,6 +330,9 @@ export const PersonalizeModal: React.FC<PersonalizeModalProps> = ({
 
   const handleSaveSongMeta = (songId: string) => {
     onUpdateSongMeta(songId, tempSongTitle, tempSongArtist, tempSongDedication, tempSongLyrics);
+    if (onUpdateSongAudioUrl) {
+      onUpdateSongAudioUrl(songId, tempSongAudioUrl);
+    }
     setEditingMetaId(null);
   };
 
@@ -1529,7 +1541,7 @@ export const PersonalizeModal: React.FC<PersonalizeModalProps> = ({
                     Love Mixtape & MP3 Songs
                   </h4>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Upload real MP3 audio files for her songs. Persists on your device across reloads.
+                    Configure real songs that play across all devices, mobile phones, and computers.
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1552,6 +1564,86 @@ export const PersonalizeModal: React.FC<PersonalizeModalProps> = ({
                       <span>Reset</span>
                     </button>
                   )}
+                </div>
+              </div>
+
+              {/* Cross-Device & Mobile Audio Playback Guide */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 to-rose-50 border border-amber-200/80 space-y-2.5 text-xs text-amber-950">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-bold text-amber-900">
+                    <Smartphone className="w-4 h-4 text-amber-600" />
+                    <span>How to Play Songs on Her Phone & Other Devices</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const manifest = playlist.map((s) => ({
+                          id: s.id,
+                          title: s.title,
+                          artist: s.artist,
+                          duration: s.duration,
+                          dedication: s.dedication,
+                          tone: s.tone,
+                          lyricsSnippet: s.lyricsSnippet,
+                          accentColor: s.accentColor,
+                          audioUrl: s.audioUrl && !s.audioUrl.startsWith('blob:') ? s.audioUrl : `./audio/${s.id}.mp3`,
+                        }));
+                        navigator.clipboard.writeText(JSON.stringify(manifest, null, 2));
+                        setCopiedPlaylistJson(true);
+                        setTimeout(() => setCopiedPlaylistJson(false), 2500);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 font-medium flex items-center gap-1.5 border border-amber-300 transition-colors"
+                      title="Copy public/playlist.json configuration"
+                    >
+                      {copiedPlaylistJson ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedPlaylistJson ? 'Copied playlist.json!' : 'Copy playlist.json'}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const manifest = playlist.map((s) => ({
+                          id: s.id,
+                          title: s.title,
+                          artist: s.artist,
+                          duration: s.duration,
+                          dedication: s.dedication,
+                          tone: s.tone,
+                          lyricsSnippet: s.lyricsSnippet,
+                          accentColor: s.accentColor,
+                          audioUrl: s.audioUrl && !s.audioUrl.startsWith('blob:') ? s.audioUrl : `./audio/${s.id}.mp3`,
+                        }));
+                        const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'playlist.json';
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-100 text-amber-900 font-medium flex items-center gap-1.5 border border-amber-300 transition-colors shadow-2xs"
+                      title="Download playlist.json to place in public/ folder"
+                    >
+                      <Download className="w-3 h-3" />
+                      <span>Download playlist.json</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] leading-relaxed text-amber-900/90">
+                  <div className="bg-white/80 p-2.5 rounded-xl border border-amber-100">
+                    <p className="font-semibold text-amber-950 mb-1">Option 1: Paste Direct Audio URLs</p>
+                    <p>
+                      Click <strong>Edit</strong> on any song below and paste a direct MP3 link (Dropbox, Google Drive direct, Catbox, Discord, or any web host). It will instantly play on any phone or computer without uploading files to GitHub!
+                    </p>
+                  </div>
+                  <div className="bg-white/80 p-2.5 rounded-xl border border-amber-100">
+                    <p className="font-semibold text-amber-950 mb-1">Option 2: Commit MP3s to your Repository</p>
+                    <p>
+                      Place your audio files into the repository's <code>public/audio/</code> folder named <code>song-1.mp3</code>, <code>song-waiting.mp3</code>, <code>song-5.mp3</code>, <code>song-nexz.mp3</code>, <code>song-saucin.mp3</code>. The site automatically detects and plays them for anyone visiting!
+                    </p>
+                  </div>
                 </div>
               </div>
 
@@ -1601,40 +1693,78 @@ export const PersonalizeModal: React.FC<PersonalizeModalProps> = ({
                             {isEditingMeta ? (
                               <div className="space-y-2 text-xs">
                                 <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Song Title</label>
+                                    <input
+                                      type="text"
+                                      value={tempSongTitle}
+                                      onChange={(e) => setTempSongTitle(e.target.value)}
+                                      placeholder="Song Title"
+                                      className="w-full px-2.5 py-1 border border-rose-200 rounded-lg font-bold text-rose-950"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Artist</label>
+                                    <input
+                                      type="text"
+                                      value={tempSongArtist}
+                                      onChange={(e) => setTempSongArtist(e.target.value)}
+                                      placeholder="Artist Name"
+                                      className="w-full px-2.5 py-1 border border-rose-200 rounded-lg text-slate-700"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <label className="block text-[10px] font-medium text-slate-500 mb-0.5">
+                                    Direct Audio URL / Cloud Link <span className="text-rose-600 font-semibold">(Plays on phones & all devices)</span>
+                                  </label>
                                   <input
                                     type="text"
-                                    value={tempSongTitle}
-                                    onChange={(e) => setTempSongTitle(e.target.value)}
-                                    placeholder="Song Title"
-                                    className="px-2.5 py-1 border border-rose-200 rounded-lg font-bold text-rose-950"
+                                    value={tempSongAudioUrl}
+                                    onChange={(e) => setTempSongAudioUrl(e.target.value)}
+                                    placeholder="e.g. https://.../song.mp3 or ./audio/song-1.mp3"
+                                    className="w-full px-2.5 py-1 border border-rose-200 rounded-lg text-slate-700 font-mono text-[11px]"
                                   />
+                                  <p className="text-[10px] text-slate-400 mt-0.5">
+                                    Direct link to MP3 (Dropbox, Google Drive direct, Catbox, Discord, or public web host).
+                                  </p>
+                                </div>
+
+                                <div>
+                                  <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Dedication Message</label>
                                   <input
                                     type="text"
-                                    value={tempSongArtist}
-                                    onChange={(e) => setTempSongArtist(e.target.value)}
-                                    placeholder="Artist Name"
-                                    className="px-2.5 py-1 border border-rose-200 rounded-lg text-slate-700"
+                                    value={tempSongDedication}
+                                    onChange={(e) => setTempSongDedication(e.target.value)}
+                                    placeholder="Dedication note..."
+                                    className="w-full px-2.5 py-1 border border-rose-200 rounded-lg text-slate-700"
                                   />
                                 </div>
-                                <input
-                                  type="text"
-                                  value={tempSongDedication}
-                                  onChange={(e) => setTempSongDedication(e.target.value)}
-                                  placeholder="Dedication note..."
-                                  className="w-full px-2.5 py-1 border border-rose-200 rounded-lg text-slate-700"
-                                />
-                                <div className="flex justify-end gap-1.5">
+
+                                <div>
+                                  <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Lyrics Snippet (Optional)</label>
+                                  <input
+                                    type="text"
+                                    value={tempSongLyrics}
+                                    onChange={(e) => setTempSongLyrics(e.target.value)}
+                                    placeholder="Romantic lyric snippet..."
+                                    className="w-full px-2.5 py-1 border border-rose-200 rounded-lg text-slate-700"
+                                  />
+                                </div>
+
+                                <div className="flex justify-end gap-1.5 pt-1">
                                   <button
                                     onClick={() => setEditingMetaId(null)}
-                                    className="px-2.5 py-1 rounded-md text-slate-500 border"
+                                    className="px-2.5 py-1 rounded-md text-slate-500 border hover:bg-slate-50"
                                   >
                                     Cancel
                                   </button>
                                   <button
                                     onClick={() => handleSaveSongMeta(song.id)}
-                                    className="px-3 py-1 rounded-md bg-rose-600 text-white font-semibold"
+                                    className="px-3 py-1 rounded-md bg-rose-600 hover:bg-rose-700 text-white font-semibold shadow-xs"
                                   >
-                                    Save Info
+                                    Save Info & Audio URL
                                   </button>
                                 </div>
                               </div>
@@ -1646,8 +1776,20 @@ export const PersonalizeModal: React.FC<PersonalizeModalProps> = ({
                                   </h5>
                                   <span className="text-xs text-slate-500">• {song.artist}</span>
                                   {hasCustomAudio && (
-                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                      Custom MP3
+                                    <span
+                                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${
+                                        song.audioUrl?.startsWith('http')
+                                          ? 'bg-blue-100 text-blue-800 border-blue-200'
+                                          : song.audioUrl?.startsWith('.')
+                                          ? 'bg-purple-100 text-purple-800 border-purple-200'
+                                          : 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                                      }`}
+                                    >
+                                      {song.audioUrl?.startsWith('http')
+                                        ? 'Cloud MP3'
+                                        : song.audioUrl?.startsWith('.')
+                                        ? 'Repository Audio'
+                                        : 'Local Device MP3'}
                                     </span>
                                   )}
                                 </div>
@@ -1712,6 +1854,7 @@ export const PersonalizeModal: React.FC<PersonalizeModalProps> = ({
                                 setTempSongArtist(song.artist);
                                 setTempSongDedication(song.dedication);
                                 setTempSongLyrics(song.lyricsSnippet || '');
+                                setTempSongAudioUrl(song.audioUrl && !song.audioUrl.startsWith('blob:') ? song.audioUrl : '');
                               }}
                               className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50"
                               title="Edit song title & artist"
@@ -2355,11 +2498,7 @@ export const PersonalizeModal: React.FC<PersonalizeModalProps> = ({
                         onClick={() => {
                           const yamlContent = `name: Deploy to GitHub Pages
 
-on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 permissions:
   contents: read

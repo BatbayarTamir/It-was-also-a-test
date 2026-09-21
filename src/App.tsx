@@ -33,6 +33,7 @@ import {
 import { romanticAudio } from './utils/audioSynthesizer';
 import { loadAllSavedAudios, saveAudioFile, removeSavedAudio } from './utils/audioStorage';
 import { loadAllSavedPolaroidImages, savePolaroidImage, removeSavedPolaroidImage } from './utils/imageStorage';
+import { setupMobileAudioUnlock, resolveSongAudioUrl, fetchPublishedPlaylistManifest } from './utils/audioResolver';
 import { Song, PolaroidMemory, LoveCoupon, GirlfriendSiteConfig, Milestone } from './types';
 
 const TOTAL_PAGES = 9;
@@ -212,41 +213,105 @@ export default function App() {
       });
   }, []);
 
-  // Restore saved MP3 audio files from IndexedDB on startup
+  // Audio playback with auto-discovery and cross-device resolution
+  const playSongWithFallback = useCallback(async (song: Song) => {
+    let url = song.audioUrl;
+    // If no active audioUrl or if it's a blob url that doesn't exist on this device
+    if (!url || url.startsWith('blob:')) {
+      const resolved = await resolveSongAudioUrl(song);
+      if (resolved) {
+        url = resolved;
+        setPlaylist((prev) =>
+          prev.map((s) => (s.id === song.id ? { ...s, audioUrl: resolved, isCustomUpload: true } : s))
+        );
+        setCurrentSong((curr) =>
+          curr.id === song.id ? { ...curr, audioUrl: resolved, isCustomUpload: true } : curr
+        );
+      }
+    }
+    romanticAudio.playTrack(song.id, url);
+    setIsPlaying(true);
+  }, []);
+
+  // Setup mobile audio unlocking, manifest sync, and audio auto-discovery across devices
   useEffect(() => {
+    // 1. Enable instant tap unlock for iOS Safari and mobile browsers
+    setupMobileAudioUnlock();
+
+    // 2. Sync published playlist manifest (public/playlist.json) for global visitor playback
+    fetchPublishedPlaylistManifest().then((manifest) => {
+      if (manifest && manifest.length > 0) {
+        setPlaylist((prev) =>
+          prev.map((s) => {
+            const m = manifest.find((item) => item.id === s.id);
+            if (m && m.audioUrl && (!s.audioUrl || s.audioUrl.startsWith('blob:'))) {
+              return {
+                ...s,
+                audioUrl: m.audioUrl,
+                title: m.title || s.title,
+                artist: m.artist || s.artist,
+                dedication: m.dedication || s.dedication,
+                isCustomUpload: true,
+              };
+            }
+            return s;
+          })
+        );
+      }
+    });
+
+    // 3. Restore saved MP3 audio files from local IndexedDB (creator's device)
     loadAllSavedAudios()
       .then((savedAudios) => {
-        if (savedAudios && Object.keys(savedAudios).length > 0) {
-          setPlaylist((prev) =>
-            prev.map((s) => {
-              const saved = savedAudios[s.id];
-              if (saved) {
-                return {
-                  ...s,
-                  audioUrl: saved.audioUrl,
-                  fileName: saved.fileName,
-                  fileSize: saved.fileSize,
-                  isCustomUpload: true,
-                };
-              }
-              return s;
-            })
-          );
-
-          setCurrentSong((curr) => {
-            const saved = savedAudios[curr.id];
+        const hasSaved = savedAudios && Object.keys(savedAudios).length > 0;
+        setPlaylist((prev) => {
+          const updated = prev.map((s) => {
+            const saved = hasSaved ? savedAudios[s.id] : undefined;
             if (saved) {
               return {
-                ...curr,
+                ...s,
                 audioUrl: saved.audioUrl,
                 fileName: saved.fileName,
                 fileSize: saved.fileSize,
                 isCustomUpload: true,
               };
             }
-            return curr;
+            return s;
           });
-        }
+
+          // 4. Auto-discover candidate audio files for songs still missing audio
+          updated.forEach(async (song) => {
+            if (!song.audioUrl) {
+              const discovered = await resolveSongAudioUrl(song);
+              if (discovered) {
+                setPlaylist((list) =>
+                  list.map((item) =>
+                    item.id === song.id ? { ...item, audioUrl: discovered, isCustomUpload: true } : item
+                  )
+                );
+                setCurrentSong((curr) =>
+                  curr.id === song.id ? { ...curr, audioUrl: discovered, isCustomUpload: true } : curr
+                );
+              }
+            }
+          });
+
+          return updated;
+        });
+
+        setCurrentSong((curr) => {
+          const saved = hasSaved ? savedAudios[curr.id] : undefined;
+          if (saved) {
+            return {
+              ...curr,
+              audioUrl: saved.audioUrl,
+              fileName: saved.fileName,
+              fileSize: saved.fileSize,
+              isCustomUpload: true,
+            };
+          }
+          return curr;
+        });
       })
       .catch((err) => {
         console.warn('Could not load saved audios from IndexedDB:', err);
@@ -256,12 +321,12 @@ export default function App() {
   // Audio Handlers
   const handlePlay = useCallback(() => {
     if (!romanticAudio.getIsPlaying()) {
-      romanticAudio.playTrack(currentSong.id, currentSong.audioUrl);
+      playSongWithFallback(currentSong);
     } else {
       romanticAudio.resume();
+      setIsPlaying(true);
     }
-    setIsPlaying(true);
-  }, [currentSong]);
+  }, [currentSong, playSongWithFallback]);
 
   const handlePause = useCallback(() => {
     romanticAudio.pause();
@@ -376,6 +441,40 @@ export default function App() {
       });
     },
     []
+  );
+
+  const handleUpdateSongAudioUrl = useCallback(
+    (songId: string, audioUrl: string) => {
+      const trimmed = audioUrl.trim();
+      setPlaylist((prev) =>
+        prev.map((s) => {
+          if (s.id === songId) {
+            return {
+              ...s,
+              audioUrl: trimmed || undefined,
+              isCustomUpload: !!trimmed,
+            };
+          }
+          return s;
+        })
+      );
+
+      setCurrentSong((curr) => {
+        if (curr.id === songId) {
+          const updated = {
+            ...curr,
+            audioUrl: trimmed || undefined,
+            isCustomUpload: !!trimmed,
+          };
+          if (isPlaying) {
+            romanticAudio.playTrack(songId, trimmed || undefined);
+          }
+          return updated;
+        }
+        return curr;
+      });
+    },
+    [isPlaying]
   );
 
   const handleAddNewSongSlot = useCallback(() => {
@@ -606,8 +705,7 @@ export default function App() {
 
       // Start audio playback
       setTimeout(() => {
-        romanticAudio.playTrack(song.id, song.audioUrl);
-        setIsPlaying(true);
+        playSongWithFallback(song);
       }, 500);
 
       // Fluidly transition to the next page automatically after the collapse finishes
@@ -616,7 +714,7 @@ export default function App() {
         setIsCollapsingMixtape(false);
       }, 1100);
     },
-    [goToPage]
+    [goToPage, playSongWithFallback]
   );
 
   const handleNextTrack = useCallback(() => {
@@ -624,18 +722,16 @@ export default function App() {
     const nextIndex = (currentIndex + 1) % playlist.length;
     const nextSong = playlist[nextIndex];
     setCurrentSong(nextSong);
-    romanticAudio.playTrack(nextSong.id, nextSong.audioUrl);
-    setIsPlaying(true);
-  }, [playlist, currentSong]);
+    playSongWithFallback(nextSong);
+  }, [playlist, currentSong, playSongWithFallback]);
 
   const handlePrevTrack = useCallback(() => {
     const currentIndex = playlist.findIndex((s) => s.id === currentSong.id);
     const prevIndex = (currentIndex - 1 + playlist.length) % playlist.length;
     const prevSong = playlist[prevIndex];
     setCurrentSong(prevSong);
-    romanticAudio.playTrack(prevSong.id, prevSong.audioUrl);
-    setIsPlaying(true);
-  }, [playlist, currentSong]);
+    playSongWithFallback(prevSong);
+  }, [playlist, currentSong, playSongWithFallback]);
 
   const handleNextPage = useCallback(() => {
     // Prevent advancing from intro page via keyboard; user must click Dive In
@@ -1112,6 +1208,7 @@ export default function App() {
         onUploadSongAudio={handleUploadSongAudio}
         onResetSongAudio={handleResetSongAudio}
         onUpdateSongMeta={handleUpdateSongMeta}
+        onUpdateSongAudioUrl={handleUpdateSongAudioUrl}
         onAddNewSongSlot={handleAddNewSongSlot}
         onDeleteSong={handleDeleteSong}
         onResetPlaylist={handleResetPlaylist}
